@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>特斯拉 M3U8 播放器</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            touch-action: manipulation;
+        }
+        
+        #app {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #videoContainer {
+            width: 100%;
+            flex: 1;
+            position: relative;
+            background-color: #000;
+        }
+        
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        /* 觸控操作遮罩 */
+        #touchOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        /* 控制按鈕區域 - 大尺寸適合觸控 */
+        #controls {
+            position: absolute;
+            bottom: 30px;
+            left: 0;
+            width: 100%;
+            padding: 15px;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            z-index: 10;
+            transition: transform 0.3s, opacity 0.3s;
+        }
+        
+        /* 頻道選擇區域 */
+        #channelSelector {
+            width: 100%;
+            height: 60vh;
+            background-color: rgba(0, 0, 0, 0.9);
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            transform: translateY(100%);
+            transition: transform 0.4s;
+            z-index: 20;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            padding-bottom: 50px; /* 避免底部按鈕被手機瀏覽器UI遮擋 */
+        }
+        
+        #channelSelector.visible {
+            transform: translateY(0);
+        }
+        
+        .channel-row {
+            display: flex;
+            padding: 15px;
+            border-bottom: 1px solid #333;
+            align-items: center;
+            touch-action: pan-y;
+        }
+        
+        .channel-logo {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin-right: 15px;
+            object-fit: cover;
+            background-color: #333;
+            flex-shrink: 0;
+        }
+        
+        .channel-info {
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .channel-name {
+            font-size: 18px;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .channel-url {
+            font-size: 12px;
+            color: #aaa;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* 按鈕樣式 - 大尺寸適合觸控 */
+        .control-button {
+            padding: 15px 20px;
+            min-width: 65px;
+            height: 60px;
+            border: none;
+            border-radius: 10px;
+            background-color: rgba(32, 148, 243, 0.8);
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            touch-action: manipulation;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .control-button:active {
+            background-color: rgba(25, 118, 210, 0.9);
+            transform: scale(0.98);
+        }
+        
+        #channelListButton {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 15;
+            background-color: rgba(0, 0, 0, 0.6);
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+        }
+        
+        #closeChannelList {
+            position: sticky;
+            bottom: 0;
+            width: 100%;
+            padding: 15px;
+            background-color: #c62828;
+            text-align: center;
+            font-weight: bold;
+            z-index: 25;
+        }
+        
+        /* 載入動畫 */
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 30;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 20px 30px;
+            border-radius: 10px;
+            display: none;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            margin: 10px auto;
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top: 4px solid #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* 狀態提示區域 */
+        #statusMsg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 20px 30px;
+            border-radius: 10px;
+            z-index: 100;
+            display: none;
+            text-align: center;
+            font-size: 18px;
+        }
+        
+        /* 隱藏視頻控制元素 */
+        .controls-hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        /* 方向按鈕 */
+        #directionalPad {
+            display: none;
+            position: absolute;
+            bottom: 100px;
+            right: 20px;
+            width: 150px;
+            height: 150px;
+            z-index: 15;
+        }
+        
+        .dir-button {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: white;
+        }
+        
+        #upButton { top: 0; left: 50px; }
+        #leftButton { left: 0; top: 50px; }
+        #rightButton { right: 0; top: 50px; }
+        #downButton { bottom: 0; left: 50px; }
+
+        /* 重試按鈕 */
+        #retryButton {
+            background-color: #c62828;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 16px;
+            margin-top: 15px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="videoContainer">
+            <video id="video" playsinline></video>
+            
+            <!-- 觸控操作遮罩 -->
+            <div id="touchOverlay"></div>
+            
+            <!-- 控制按鈕 -->
+            <div id="controls">
+                <button id="playPauseBtn" class="control-button">播放</button>
+                <button id="prevChannelBtn" class="control-button">◀ 上一個</button>
+                <button id="nextChannelBtn" class="control-button">下一個 ▶</button>
+                <button id="fullscreenBtn" class="control-button">全螢幕</button>
+            </div>
+            
+            <button id="channelListButton" class="control-button">頻道</button>
+            
+            <!-- 方向控制板 -->
+            <div id="directionalPad">
+                <div id="upButton" class="dir-button">▲</div>
+                <div id="leftButton" class="dir-button">◀</div>
+                <div id="rightButton" class="dir-button">▶</div>
+                <div id="downButton" class="dir-button">▼</div>
+            </div>
+        </div>
+        
+        <!-- 頻道選擇器 -->
+        <div id="channelSelector">
+            <div id="channelList">
+                <!-- 頻道列表將在這裡動態生成 -->
+                <div class="channel-row" style="justify-content: center; padding: 30px 15px;">
+                    <span>正在載入頻道列表...</span>
+                </div>
+            </div>
+            <button id="closeChannelList">關閉頻道列表</button>
+        </div>
+        
+        <!-- 載入提示 -->
+        <div id="loading">
+            <div class="spinner"></div>
+            <div id="loadingText">載入中...</div>
+            <button id="retryButton">重試</button>
+        </div>
+        
+        <!-- 狀態提示 -->
+        <div id="statusMsg"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 基本元素引用
+            const video = document.getElementById('video');
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            const prevChannelBtn = document.getElementById('prevChannelBtn');
+            const nextChannelBtn = document.getElementById('nextChannelBtn');
+            const fullscreenBtn = document.getElementById('fullscreenBtn');
+            const channelListButton = document.getElementById('channelListButton');
+            const channelSelector = document.getElementById('channelSelector');
+            const closeChannelList = document.getElementById('closeChannelList');
+            const channelList = document.getElementById('channelList');
+            const touchOverlay = document.getElementById('touchOverlay');
+            const controls = document.getElementById('controls');
+            const loading = document.getElementById('loading');
+            const loadingText = document.getElementById('loadingText');
+            const retryButton = document.getElementById('retryButton');
+            const statusMsg = document.getElementById('statusMsg');
+            
+            // 全域變數
+            let hls = null;
+            let channels = [];
+            let currentChannelIndex = 0;
+            let touchStartX = 0;
+            let touchStartY = 0;
+            let touchStartTime = 0;
+            let controlsVisible = true;
+            let controlsTimeout;
+            let statusTimeout;
+            let m3u8Url = 'https://ronron1982.github.io/tv.m3u8';
+            let isLoading = false;
+            
+            // 初始化應用程式
+            initApp();
+            
+            function initApp() {
+                // 載入頻道列表
+                loadChannelList();
+                
+                // 設置事件監聽
+                setupEventListeners();
+                
+                // 顯示控制項
+                showControls();
+            }
+            
+            // 載入頻道列表
+            function loadChannelList() {
+                showLoading('載入頻道列表中...');
+                
+                fetch(m3u8Url)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('無法讀取頻道列表');
+                        }
+                        return response.text();
+                    })
+                    .then(data => parseM3U8(data))
+                    .then(() => {
+                        renderChannelList();
+                        if (channels.length > 0) {
+                            loadChannel(0);
+                        }
+                        hideLoading();
+                    })
+                    .catch(error => {
+                        console.error('載入頻道列表失敗:', error);
+                        showLoading('載入頻道列表失敗!', true);
+                    });
+            }
+            
+            // 解析 M3U8 文件
+            function parseM3U8(data) {
+                channels = [];
+                const lines = data.split('\n');
+                let currentChannel = {};
+                
+                lines.forEach(line => {
+                    if (line.startsWith('#EXTINF:')) {
+                        currentChannel = {};
+                        
+                        // 解析頻道名稱
+                        let nameMatch = line.match(/,(.+)$/);
+                        if (nameMatch) {
+                            currentChannel.name = nameMatch[1].trim();
+                        }
+                        
+                        // 解析頻道標誌
+                        let logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                        if (logoMatch) {
+                            currentChannel.logo = logoMatch[1].trim();
+                        } else {
+                            currentChannel.logo = '';
+                        }
+                    } else if (line.trim() !== '' && !line.startsWith('#')) {
+                        // 這是 URL 行
+                        if (currentChannel.name) {
+                            currentChannel.url = line.trim();
+                            channels.push(currentChannel);
+                            currentChannel = {};
+                        }
+                    }
+                });
+                
+                console.log(`已載入 ${channels.length} 個頻道`);
+            }
+            
+            // 渲染頻道列表
+            function renderChannelList() {
+                channelList.innerHTML = '';
+                
+                if (channels.length === 0) {
+                    channelList.innerHTML = '<div class="channel-row" style="justify-content: center;"><span>沒有可用的頻道</span></div>';
+                    return;
+                }
+                
+                channels.forEach((channel, index) => {
+                    const channelRow = document.createElement('div');
+                    channelRow.className = 'channel-row';
+                    channelRow.dataset.index = index;
+                    
+                    // 頻道標誌
+                    const logo = document.createElement('img');
+                    logo.className = 'channel-logo';
+                    logo.src = channel.logo || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB4PSIyIiB5PSIyIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHJ4PSIyLjE4IiByeT0iMi4xOCI+PC9yZWN0PjxsaW5lIHgxPSI3IiB5MT0iMiIgeDI9IjciIHkyPSIyMiI+PC9saW5lPjxsaW5lIHgxPSIxNyIgeTE9IjIiIHgyPSIxNyIgeTI9IjIyIj48L2xpbmU+PGxpbmUgeDE9IjIiIHkxPSIxMiIgeDI9IjIyIiB5Mj0iMTIiPjwvbGluZT48bGluZSB4MT0iMiIgeTE9IjciIHgyPSI3IiB5Mj0iNyI+PC9saW5lPjxsaW5lIHgxPSIyIiB5MT0iMTciIHgyPSI3IiB5Mj0iMTciPjwvbGluZT48bGluZSB4MT0iMTciIHkxPSIxNyIgeDI9IjIyIiB5Mj0iMTciPjwvbGluZT48bGluZSB4MT0iMTciIHkxPSI3IiB4Mj0iMjIiIHkyPSI3Ij48L2xpbmU+PC9zdmc+';
+                    logo.onerror = function() {
+                        this.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB4PSIyIiB5PSIyIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHJ4PSIyLjE4IiByeT0iMi4xOCI+PC9yZWN0PjxsaW5lIHgxPSI3IiB5MT0iMiIgeDI9IjciIHkyPSIyMiI+PC9saW5lPjxsaW5lIHgxPSIxNyIgeTE9IjIiIHgyPSIxNyIgeTI9IjIyIj48L2xpbmU+PGxpbmUgeDE9IjIiIHkxPSIxMiIgeDI9IjIyIiB5Mj0iMTIiPjwvbGluZT48bGluZSB4MT0iMiIgeTE9IjciIHgyPSI3IiB5Mj0iNyI+PC9saW5lPjxsaW5lIHgxPSIyIiB5MT0iMTciIHgyPSI3IiB5Mj0iMTciPjwvbGluZT48bGluZSB4MT0iMTciIHkxPSIxNyIgeDI9IjIyIiB5Mj0iMTciPjwvbGluZT48bGluZSB4MT0iMTciIHkxPSI3IiB4Mj0iMjIiIHkyPSI3Ij48L2xpbmU+PC9zdmc+';
+                    };
+                    
+                    // 頻道信息區
+                    const info = document.createElement('div');
+                    info.className = 'channel-info';
+                    
+                    const name = document.createElement('div');
+                    name.className = 'channel-name';
+                    name.textContent = channel.name;
+                    
+                    const url = document.createElement('div');
+                    url.className = 'channel-url';
+                    url.textContent = channel.url.substr(0, 50) + (channel.url.length > 50 ? '...' : '');
+                    
+                    info.appendChild(name);
+                    info.appendChild(url);
+                    
+                    channelRow.appendChild(logo);
+                    channelRow.appendChild(info);
+                    
+                    channelRow.addEventListener('click', () => {
+                        loadChannel(index);
+                        hideChannelSelector();
+                    });
+                    
+                    channelList.appendChild(channelRow);
+                });
+            }
+            
+            // 顯示載入中提示
+            function showLoading(message, showRetry = false) {
+                isLoading = true;
+                loadingText.textContent = message;
+                retryButton.style.display = showRetry ? 'block' : 'none';
+                loading.style.display = 'block';
+            }
+            
+            // 隱藏載入中提示
+            function hideLoading() {
+                isLoading = false;
+                loading.style.display = 'none';
+            }
+            
+            // 載入指定頻道
+            function loadChannel(index) {
+                if (channels.length === 0) return;
+                
+                if (index < 0) index = channels.length - 1;
+                if (index >= channels.length) index = 0;
+                
+                currentChannelIndex = index;
+                const channel = channels[currentChannelIndex];
+                
+                showStatus(`正在載入: ${channel.name}`);
+                showLoading(`載入頻道: ${channel.name}`);
+                
+                // 清除先前的 HLS 實例
+                if (hls) {
+                    hls.destroy();
+                    hls = null;
+                }
+                
+                // 重置視頻狀態
+                video.pause();
+                video.removeAttribute('src');
+                video.load();
+                
+                // 使用 HLS.js 播放視頻
+                if (Hls.isSupported()) {
+                    hls = new Hls({
+                        maxBufferLength: 30,
+                        maxMaxBufferLength: 60,
+                        manifestLoadingTimeOut: 10000,
+                        manifestLoadingMaxRetry: 5,
+                        manifestLoadingRetryDelay: 1000,
+                        levelLoadingTimeOut: 10000,
+                        levelLoadingMaxRetry: 5,
+                        levelLoadingRetryDelay: 1000,
+                        fragLoadingTimeOut: 20000,
+                        fragLoadingMaxRetry: 6,
+                        fragLoadingRetryDelay: 1000
+                    });
+                    
+                    hls.loadSource(channel.url);
+                    hls.attachMedia(video);
+                    
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        console.log('視頻清單已解析完成');
+                        hideLoading();
+                        playVideo();
+                    });
+                    
+                    hls.on(Hls.Events.ERROR, function(event, data) {
+                        console.error('HLS 錯誤:', data);
+                        
+                        if (data.fatal) {
+                            switch(data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    console.log('網路錯誤，嘗試恢復...');
+                                    showStatus('網路錯誤，嘗試恢復...');
+                                    hls.startLoad();
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    console.log('媒體錯誤，嘗試恢復...');
+                                    showStatus('媒體錯誤，嘗試恢復...');
+                                    hls.recoverMediaError();
+                                    break;
+                                default:
+                                    console.log('無法恢復的錯誤');
+                                    showLoading('無法載入頻道，請嘗試其他頻道', true);
+                                    break;
+                            }
+                        }
+                    });
+                }
+                // 瀏覽器原生支援 HLS
+                else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = channel.url;
+                    video.addEventListener('loadedmetadata', function() {
+                        hideLoading();
+                        playVideo();
+                    });
+                    
+                    video.addEventListener('error', function() {
+                        showLoading('播放錯誤，請嘗試其他頻道', true);
+                    });
+                }
+                else {
+                    showStatus('您的瀏覽器不支援播放 HLS 串流');
+                    hideLoading();
+                }
+            }
+            
+            // 播放視頻
+            function playVideo() {
+                video.play().then(() => {
+                    playPauseBtn.textContent = '暫停';
+                    showStatus('正在播放');
+                }).catch(e => {
+                    console.log('自動播放被阻止，需要使用者操作', e);
+                    playPauseBtn.textContent = '播放';
+                    showStatus('點擊播放按鈕開始播放');
+                });
+            }
+            
+            // 顯示控制項
+            function showControls() {
+                controls.classList.remove('controls-hidden');
+                channelListButton.style.opacity = '1';
+                channelListButton.style.pointerEvents = 'auto';
+                controlsVisible = true;
+                
+                // 設定自動隱藏控制項的計時器
+                clearTimeout(controlsTimeout);
+                controlsTimeout = setTimeout(hideControls, 5000);
+            }
+            
+            // 隱藏控制項
+            function hideControls() {
+                if (video.paused || isLoading) return;
+                
+                controls.classList.add('controls-hidden');
+                channelListButton.style.opacity = '0.2';
+                controlsVisible = false;
+            }
+            
+            // 切換頻道選擇器
+            function toggleChannelSelector() {
+                if (channelSelector.classList.contains('visible')) {
+                    hideChannelSelector();
+                } else {
+                    showChannelSelector();
+                }
+            }
+            
+            // 顯示頻道選擇器
+            function showChannelSelector() {
+                channelSelector.classList.add('visible');
+                clearTimeout(controlsTimeout);
+            }
+            
+            // 隱藏頻道選擇器
+            function hideChannelSelector() {
+                channelSelector.classList.remove('visible');
+                showControls();
+            }
+            
+            // 切換全螢幕
+            function toggleFullscreen() {
+                if (document.fullscreenElement) {
+                    if (document.exitFullscreen) {
+                        document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        document.webkitExitFullscreen();
+                    } else if (document.mozCancelFullScreen) {
+                        document.mozCancelFullScreen();
+                    } else if (document.msExitFullscreen) {
+                        document.msExitFullscreen();
+                    }
+                } else {
+                    const videoContainer = document.getElementById('videoContainer');
+                    if (videoContainer.requestFullscreen) {
+                        videoContainer.requestFullscreen();
+                    } else if (videoContainer.webkitRequestFullscreen) {
+                        videoContainer.webkitRequestFullscreen();
+                    } else if (videoContainer.msRequestFullscreen) {
+                        videoContainer.msRequestFullscreen();
+                    } else if (videoContainer.mozRequestFullScreen) {
+                        videoContainer.mozRequestFullScreen();
+                    } else {
+                        // Tesla 瀏覽器專用全螢幕方法
+                        document.documentElement.style.width = '100%';
+                        document.documentElement.style.height = '100%';
+                        videoContainer.style.width = '100%';
+                        videoContainer.style.height = '100%';
+                        videoContainer.style.position = 'fixed';
+                        videoContainer.style.top = '0';
+                        videoContainer.style.left = '0';
+                        videoContainer.style.zIndex = '9999';
+                    }
+                }
+            }
+            
+            // 顯示狀態訊息
+            function showStatus(message, duration = 3000) {
+                statusMsg.textContent = message;
+                statusMsg.style.display = 'block';
+                
+                clearTimeout(statusTimeout);
+                statusTimeout = setTimeout(() => {
+                    statusMsg.style.display = 'none';
+                }, duration);
+            }
+            
+            // 設置事件監聽
+            function setupEventListeners() {
+                // 播放/暫停按鈕
+                playPauseBtn.addEventListener('click', () => {
+                    if (video.paused) {
+                        video.play().then(() => {
+                            playPauseBtn.textContent = '暫停';
+                        }).catch(e => {
+                            console.error('播放失敗:', e);
+                        });
+                    } else {
+                        video.pause();
+                        playPauseBtn.textContent = '播放';
+                    }
+                });
+                
+                // 上一頻道按鈕
+                prevChannelBtn.addEventListener('click', () => {
+                    loadChannel(currentChannelIndex - 1);
+                });
+                
+                // 下一頻道按鈕
+                nextChannelBtn.addEventListener('click', () => {
+                    loadChannel(currentChannelIndex + 1);
+                });
+                
+                // 全螢幕按鈕
+                fullscreenBtn.addEventListener('click', toggleFullscreen);
+                
+                // 頻道列表按鈕
+                channelListButton.addEventListener('click', toggleChannelSelector);
+                
+                // 關閉頻道列表按鈕
+                closeChannelList.addEventListener('click', hideChannelSelector);
+                
+                // 重試按鈕
+                retryButton.addEventListener('click', () => {
+                    if (channels.length > 0) {
+                        loadChannel(currentChannelIndex);
+                    } else {
+                        loadChannelList();
+                    }
+                });
+                
+                // 觸控覆蓋層事件
+                touchOverlay.addEventListener('touchstart', handleTouchStart);
+                touchOverlay.addEventListener('touchend', handleTouchEnd);
+                touchOverlay.addEventListener('click', handleClick);
+                
+                // 視頻事件
+                video.addEventListener('play', () => {
+                    playPauseBtn.textContent = '暫停';
+                });
+                
+                video.addEventListener('pause', () => {
+                    playPauseBtn.textContent = '播放';
+                    showControls();
+                });
+                
+                video.addEventListener('ended', () => {
+                    playPauseBtn.textContent = '播放';
+                    showControls();
+                });
+                
+                // 全螢幕變更事件
+                document.addEventListener('fullscreenchange', updateFullscreenButton);
+                document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+                document.addEventListener('mozfullscreenchange', updateFullscreenButton);
+                document.addEventListener('MSFullscreenChange', updateFullscreenButton);
+            }
+            
+            // 處理觸控開始事件
+            function handleTouchStart(e) {
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+                touchStartTime = Date.now();
+            }
+            
+            // 處理觸控結束事件
+            function handleTouchEnd(e) {
+                const touchEndX = e.changedTouches[0].clientX;
+                const touchEndY = e.changedTouches[0].clientY;
+                const touchEndTime = Date.now();
+                const touchDuration = touchEndTime - touchStartTime;
+                
+                // 計算水平和垂直滑動距離
+                const deltaX = touchEndX - touchStartX;
+                const deltaY = touchEndY - touchStartY;
+                const absDeltaX = Math.abs(deltaX);
+                const absDeltaY = Math.abs(deltaY);
+                
+                // 如果是短觸碰 (點擊)，直接返回，由 click 事件處理
+                if (touchDuration < 250 && absDeltaX < 20 && absDeltaY < 20) return;
+                
+                // 水平滑動 - 切換頻道
+                if (absDeltaX > 100 && absDeltaX > absDeltaY) {
+                    if (deltaX > 0) {
+                        // 右滑 - 上一頻道
+                        loadChannel(currentChannelIndex - 1);
+                    } else {
+                        // 左滑 - 下一頻道
+                        loadChannel(currentChannelIndex + 1);
+                    }
+                }
+                
+                // 垂直滑動 - 控制頻道列表
+                if (absDeltaY > 100 && absDeltaY > absDeltaX) {
+                    if (deltaY < 0) {
+                        // 上滑 - 顯示頻道列表
+                        showChannelSelector();
+                    } else {
+                        // 下滑 - 隱藏頻道列表
+                        hideChannelSelector();
+                    }
+                }
+            }
+            
+            // 處理點擊事件
+            function handleClick() {
+                if (controlsVisible) {
+                    hideControls();
+                } else {
+                    showControls();
+                }
+            }
+            
+            // 更新全螢幕按鈕
+            function updateFullscreenButton() {
+                if (document.fullscreenElement || 
+                    document.webkitFullscreenElement ||
+                    document.mozFullScreenElement ||
+                    document.msFullscreenElement) {
+                    fullscreenBtn.textContent = '退出全螢幕';
+                } else {
+                    fullscreenBtn.textContent = '全螢幕';
+                }
+            }
+        });
+    </script>
+</body>
+</html>
