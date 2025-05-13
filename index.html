@@ -1,29 +1,39 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-  <meta charset="UTF-8">
-  <title>直播播放器</title>
-  <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.8.0/dist/mpegts.min.js"></script>
+<meta charset="UTF-8">
+<title>直播播放器</title>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.8.0/dist/mpegts.min.js"></script>
 </head>
 <body style="margin:0; background-color:black;">
-  <video id="video" controls autoplay style="width:100vw; height:100vh; background-color:black;"></video>
+<video id="video" controls autoplay style="width:100vw; height:100vh; background-color:black;"></video>
 
-  <script>
-    if (mpegts.getFeatureList().mseLivePlayback) {
-      const videoElement = document.getElementById('video');
-      const player = mpegts.createPlayer({
-        type: 'mpegts',
-        isLive: true,
-        url: 'http://php.jdshipin.com:8880/TVOD/iptv.php?id=fct2'
-      });
+<script>
+  if (mpegts.getFeatureList().mseLivePlayback) {
+    const videoElement = document.getElementById('video');
+    const player = mpegts.createPlayer({
+      type: 'mpegts',
+      isLive: true,
+      url: 'http://php.jdshipin.com:8880/TVOD/iptv.php?id=fct2'
+    });
 
-      player.attachMediaElement(videoElement);
-      player.load();
-      player.play();
+    player.attachMediaElement(videoElement);
+    player.load();
+    player.play();
 
-    } else {
-      alert("您的瀏覽器不支援 MSE，無法播放串流。");
-    }
-  </script>
+    // 错误处理
+    player.on(mpegts.Events.ERROR, (type, details) => {
+      console.error('播放错误:', type, details);
+    });
+
+    // 加载完成事件
+    player.on(mpegts.Events.LOADING_COMPLETE, () => {
+      console.log('加载完成');
+    });
+
+  } else {
+    alert("您的浏览器不支援 MSE，無法播放串流。");
+  }
+</script>
 </body>
 </html>
