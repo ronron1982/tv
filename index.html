@@ -3,9 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>特斯拉 M3U8 播放器 V1.0</title>
-    <!-- 極簡化的播放器引入，僅保留必要部分 -->
+    <title>特斯拉 M3U8 播放器</title>
+    <!-- 保留最小必要的播放器引入 -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.2.0/dist/hls.light.min.js"></script>
+    <!-- 加入基礎 Dash.js 支持 -->
+    <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+    <!-- 加入 Flv.js 支持 -->
+    <script src="https://cdn.jsdelivr.net/npm/flv.js@1.5.0/dist/flv.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -359,6 +363,52 @@
             font-size: 16px;
             font-weight: bold;
         }
+
+        /* 極簡視頻容器 - 特斯拉專用 */
+        #teslaSimpleVideo {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            display: none;
+        }
+        
+        /* 直接嵌入 iframe 容器 */
+        #embedContainer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 9990;
+            background-color: #000;
+            display: none;
+        }
+        
+        #embedFrame {
+            width: 100%;
+            height: 100%;
+            border: 0;
+        }
+        
+        /* 格式選擇器 */
+        #formatSelector {
+            padding: 15px;
+            border-top: 1px solid #444;
+            display: none;
+        }
+        
+        .format-button {
+            padding: 10px;
+            margin: 5px;
+            background-color: rgba(32, 148, 243, 0.8);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -415,6 +465,15 @@
                 <button id="playDirectLinkBtn">直接播放</button>
             </div>
             
+            <!-- 格式選擇器 -->
+            <div id="formatSelector">
+                <h3 style="margin-bottom: 10px;">播放格式</h3>
+                <button id="formatHLS" class="format-button">HLS (默認)</button>
+                <button id="formatDirect" class="format-button">直接播放</button>
+                <button id="formatEmbed" class="format-button">嵌入播放</button>
+                <button id="formatMp4" class="format-button">嘗試 MP4</button>
+            </div>
+            
             <button id="closeChannelList">關閉頻道列表</button>
         </div>
         
@@ -432,6 +491,14 @@
         <div id="teslaContainer">
             <video id="teslaVideo" playsinline webkit-playsinline autoplay></video>
         </div>
+
+        <!-- 特斯拉極簡視頻 -->
+        <div id="teslaSimpleVideo"></div>
+        
+        <!-- 嵌入播放容器 -->
+        <div id="embedContainer">
+            <iframe id="embedFrame" allowfullscreen></iframe>
+        </div>
     </div>
 
     <script>
@@ -440,6 +507,9 @@
             const video = document.getElementById('video');
             const teslaVideo = document.getElementById('teslaVideo');
             const teslaContainer = document.getElementById('teslaContainer');
+            const teslaSimpleVideo = document.getElementById('teslaSimpleVideo');
+            const embedContainer = document.getElementById('embedContainer');
+            const embedFrame = document.getElementById('embedFrame');
             const playPauseBtn = document.getElementById('playPauseBtn');
             const prevChannelBtn = document.getElementById('prevChannelBtn');
             const nextChannelBtn = document.getElementById('nextChannelBtn');
@@ -457,6 +527,11 @@
             const searchInput = document.getElementById('searchInput');
             const directLinkInput = document.getElementById('directLinkInput');
             const playDirectLinkBtn = document.getElementById('playDirectLinkBtn');
+            const formatSelector = document.getElementById('formatSelector');
+            const formatHLS = document.getElementById('formatHLS');
+            const formatDirect = document.getElementById('formatDirect');
+            const formatEmbed = document.getElementById('formatEmbed');
+            const formatMp4 = document.getElementById('formatMp4');
             
             // 全域變數
             let hls = null;
@@ -474,6 +549,9 @@
             let isTeslaMode = false;
             let isTesla = navigator.userAgent.indexOf('Tesla') > -1 || 
                          navigator.userAgent.indexOf('QtCarBrowser') > -1;
+            let currentPlayMethod = 'hls'; // 'hls', 'direct', 'embed', 'mp4'
+            let currentUrl = '';
+            let isFormatSelectorVisible = false;
             
             // 初始化應用程式
             initApp();
@@ -616,7 +694,7 @@
                 });
             }
             
-            // 載入指定頻道 - Tesla 模式優化版本
+            // 載入指定頻道 - 多格式支援版本
             function loadChannel(index) {
                 if (channels.length === 0) return;
                 
@@ -625,6 +703,7 @@
                 
                 currentChannelIndex = index;
                 const channel = channels[currentChannelIndex];
+                currentUrl = channel.url;
                 
                 showStatus(`正在載入: ${channel.name}`);
                 showLoading(`載入頻道: ${channel.name}`);
@@ -632,50 +711,251 @@
                 // 清除先前的播放器狀態
                 cleanupPlayers();
                 
-                // 根據不同模式選擇播放方式
-                if (isTesla && !isTeslaMode) {
-                    // 切換到 Tesla 模式
-                    enableTeslaMode(channel.url);
-                } else if (isTeslaMode) {
-                    // 已在 Tesla 模式下
-                    playInTeslaMode(channel.url);
-                } else {
-                    // 標準模式播放
-                    playInStandardMode(channel.url);
+                // 根據不同播放方法選擇播放
+                playWithCurrentMethod(currentUrl, channel.name);
+            }
+            
+            // 根據當前方法播放
+            function playWithCurrentMethod(url, title = '未知頻道') {
+                console.log(`使用 ${currentPlayMethod} 方法播放: ${url}`);
+                
+                switch(currentPlayMethod) {
+                    case 'hls':
+                        if (isTesla) {
+                            playInTeslaMode(url);
+                        } else {
+                            playInStandardMode(url);
+                        }
+                        break;
+                    
+                    case 'direct':
+                        playDirectVideo(url);
+                        break;
+                    
+                    case 'embed':
+                        playEmbedVideo(url, title);
+                        break;
+                    
+                    case 'mp4':
+                        playAsMP4(url);
+                        break;
+                        
+                    default:
+                        playInStandardMode(url);
                 }
             }
             
-            // 直接以 URL 播放 (仿 testube.app)
-            function playDirectUrl(url) {
-                if (!url) return;
+            // 嘗試 MP4 播放（一些 M3U8 鏈接直接替換為 MP4 可能工作）
+            function playAsMP4(url) {
+                console.log('嘗試作為 MP4 播放');
                 
-                showStatus(`正在載入直接URL`);
-                showLoading(`載入URL: ${url}`);
-                
-                // 創建一個臨時頻道物件
-                const tempChannel = {
-                    name: '直接播放URL',
-                    logo: '',
-                    url: url
-                };
-                
-                // 添加到頻道列表的開頭
-                channels.unshift(tempChannel);
-                currentChannelIndex = 0;
-                
-                // 清除先前的播放器狀態
-                cleanupPlayers();
-                
-                // 根據不同模式選擇播放方式
-                if (isTesla) {
-                    enableTeslaMode(url);
-                } else {
-                    playInStandardMode(url);
+                // 嘗試將 M3U8 鏈接轉換為 MP4
+                let mp4Url = url;
+                if (url.includes('.m3u8')) {
+                    mp4Url = url.replace('.m3u8', '.mp4');
+                    console.log('轉換 M3U8 到 MP4:', mp4Url);
                 }
                 
-                // 更新頻道列表
-                renderChannelList();
-                hideChannelSelector();
+                if (isTesla) {
+                    // 在特斯拉模式下直接播放 MP4
+                    teslaContainer.style.display = 'block';
+                    teslaVideo.src = mp4Url;
+                    
+                    setTimeout(() => {
+                        teslaVideo.play()
+                            .then(() => {
+                                console.log('Tesla MP4 播放成功');
+                                hideLoading();
+                                playPauseBtn.textContent = '暫停';
+                            })
+                            .catch(err => {
+                                console.error('Tesla MP4 播放失敗:', err);
+                                // 如果 MP4 播放失敗，嘗試直接模式
+                                currentPlayMethod = 'direct';
+                                playWithCurrentMethod(url);
+                            });
+                    }, 300);
+                } else {
+                    // 在標準模式下播放 MP4
+                    video.src = mp4Url;
+                    
+                    video.oncanplay = () => {
+                        console.log('MP4 可以播放');
+                        video.play()
+                            .then(() => {
+                                console.log('MP4 播放成功');
+                                hideLoading();
+                                playPauseBtn.textContent = '暫停';
+                            })
+                            .catch(e => {
+                                console.error('MP4 播放失敗:', e);
+                                playPauseBtn.textContent = '播放';
+                            });
+                    };
+                    
+                    video.onerror = () => {
+                        console.error('MP4 載入錯誤');
+                        // 嘗試直接播放原始鏈接
+                        currentPlayMethod = 'direct';
+                        playWithCurrentMethod(url);
+                    };
+                }
+            }
+            
+            // 直接使用視頻元素播放（極簡模式）
+            function playDirectVideo(url) {
+                console.log('使用直接方式播放:', url);
+                
+                hideAllContainers();
+                
+                if (isTesla) {
+                    // 使用最簡單的方法在特斯拉上播放
+                    teslaSimpleVideo.style.display = 'block';
+                    teslaSimpleVideo.innerHTML = `
+                        <video id="basicVideo" width="100%" height="100%" 
+                            autoplay controls playsinline webkit-playsinline>
+                            <source src="${url}" type="application/x-mpegURL">
+                            <source src="${url.replace('.m3u8', '.mp4')}" type="video/mp4">
+                            您的瀏覽器不支持視頻播放
+                        </video>
+                    `;
+                    
+                    const basicVideo = document.getElementById('basicVideo');
+                    if (basicVideo) {
+                        basicVideo.oncanplay = () => {
+                            console.log('直接視頻可以播放');
+                            hideLoading();
+                            playPauseBtn.textContent = '暫停';
+                        };
+                        
+                        basicVideo.onerror = () => {
+                            console.error('直接視頻載入錯誤');
+                            showLoading('播放失敗，請嘗試其他格式', true);
+                        };
+                        
+                        // 強制嘗試播放
+                        setTimeout(() => {
+                            try {
+                                basicVideo.play();
+                            } catch (e) {
+                                console.error('強制播放失敗:', e);
+                            }
+                        }, 500);
+                    }
+                } else {
+                    // 在標準瀏覽器中使用標準模式
+                    playInStandardMode(url);
+                }
+            }
+            
+            // 使用嵌入框架播放（很多流媒體網站使用這種方法）
+            function playEmbedVideo(url, title) {
+                console.log('使用嵌入方式播放:', url);
+                
+                hideAllContainers();
+                embedContainer.style.display = 'block';
+                
+                // 為特斯拉瀏覽器創建一個簡單的播放頁面
+                const embedHtml = `
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>${title}</title>
+                        <style>
+                            body, html { margin: 0; padding: 0; height: 100%; background: #000; }
+                            #player { width: 100%; height: 100%; }
+                        </style>
+                    </head>
+                    <body>
+                        <video id="player" controls autoplay playsinline webkit-playsinline>
+                            <source src="${url}" type="application/x-mpegURL">
+                        </video>
+                        <script>
+                            document.getElementById('player').play();
+                        </script>
+                    </body>
+                    </html>
+                `;
+                
+                try {
+                    // 創建 data URL
+                    const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(embedHtml);
+                    embedFrame.src = dataUrl;
+                    hideLoading();
+                } catch (e) {
+                    console.error('嵌入播放失敗:', e);
+                    showLoading('嵌入播放失敗', true);
+                }
+            }
+            
+            // 使用 FLV 播放
+            function playAsFlv(url) {
+                if (!window.flvjs || !flvjs.isSupported()) {
+                    console.error('不支持 FLV 播放');
+                    return false;
+                }
+                
+                if (!url.includes('.flv')) {
+                    console.log('不是 FLV 格式');
+                    return false;
+                }
+                
+                try {
+                    const flvPlayer = flvjs.createPlayer({
+                        type: 'flv',
+                        url: url
+                    });
+                    flvPlayer.attachMediaElement(video);
+                    flvPlayer.load();
+                    flvPlayer.play().then(() => {
+                        console.log('FLV 播放成功');
+                        hideLoading();
+                        playPauseBtn.textContent = '暫停';
+                    }).catch(e => {
+                        console.error('FLV 播放失敗:', e);
+                    });
+                    return true;
+                } catch (e) {
+                    console.error('FLV 初始化失敗:', e);
+                    return false;
+                }
+            }
+            
+            // 使用 DASH 播放
+            function playAsDash(url) {
+                if (!window.dashjs) {
+                    console.error('不支持 DASH 播放');
+                    return false;
+                }
+                
+                if (!url.includes('.mpd')) {
+                    console.log('不是 DASH 格式');
+                    return false;
+                }
+                
+                try {
+                    const dashPlayer = dashjs.MediaPlayer().create();
+                    dashPlayer.initialize(video, url, true);
+                    dashPlayer.on('playbackStarted', () => {
+                        console.log('DASH 播放開始');
+                        hideLoading();
+                        playPauseBtn.textContent = '暫停';
+                    });
+                    return true;
+                } catch (e) {
+                    console.error('DASH 初始化失敗:', e);
+                    return false;
+                }
+            }
+            
+            // 隱藏所有容器
+            function hideAllContainers() {
+                teslaContainer.style.display = 'none';
+                teslaSimpleVideo.style.display = 'none';
+                embedContainer.style.display = 'none';
+                video.style.display = 'block';
             }
             
             // 清理現有的播放器實例
@@ -697,124 +977,14 @@
                 teslaVideo.pause();
                 teslaVideo.removeAttribute('src');
                 teslaVideo.load();
-            }
-            
-            // 啟用 Tesla 特殊模式
-            function enableTeslaMode(url) {
-                console.log('啟動 Tesla 特殊模式');
-                isTeslaMode = true;
-                teslaContainer.style.display = 'block';
                 
-                playInTeslaMode(url);
-            }
-            
-            // Tesla 特殊模式播放
-            function playInTeslaMode(url) {
-                console.log('Tesla 模式播放:', url);
+                // 清理額外的播放器
+                teslaSimpleVideo.style.display = 'none';
+                teslaSimpleVideo.innerHTML = '';
+                embedContainer.style.display = 'none';
+                embedFrame.src = '';
                 
-                // 直接使用原生播放方式
-                teslaVideo.src = url;
-                
-                // 新增強制載入計時器
-                setTimeout(() => {
-                    teslaVideo.play()
-                        .then(() => {
-                            console.log('Tesla 影片播放成功');
-                            playPauseBtn.textContent = '暫停';
-                            hideLoading();
-                            showStatus('正在播放', 2000);
-                        })
-                        .catch(err => {
-                            console.error('Tesla 影片播放失敗:', err);
-                            playPauseBtn.textContent = '播放';
-                            showLoading('播放失敗', true);
-                        });
-                }, 500);
-                
-                // 監聽事件
-                const errorHandler = () => {
-                    console.error('Tesla 播放錯誤');
-                    showLoading('播放錯誤，請嘗試其他頻道', true);
-                    teslaVideo.removeEventListener('error', errorHandler);
-                };
-                
-                teslaVideo.addEventListener('error', errorHandler);
-            }
-            
-            // 標準模式播放
-            function playInStandardMode(url) {
-                console.log('標準模式播放:', url);
-                
-                // 先嘗試原生支持
-                if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                    console.log('使用原生 HLS 支援');
-                    video.src = url;
-                    video.addEventListener('loadedmetadata', function onMetadata() {
-                        video.play()
-                            .then(() => {
-                                console.log('影片播放成功');
-                                playPauseBtn.textContent = '暫停';
-                                hideLoading();
-                            })
-                            .catch(e => {
-                                console.error('播放失敗:', e);
-                                playPauseBtn.textContent = '播放';
-                            });
-                        video.removeEventListener('loadedmetadata', onMetadata);
-                    });
-                    
-                    video.addEventListener('error', function onError(e) {
-                        console.error('影片錯誤:', e);
-                        showLoading('播放錯誤，請嘗試其他頻道', true);
-                        video.removeEventListener('error', onError);
-                    });
-                }
-                // 否則使用 HLS.js
-                else if (Hls.isSupported()) {
-                    console.log('使用 HLS.js');
-                    try {
-                        hls = new Hls({
-                            maxBufferLength: 30,
-                            maxMaxBufferLength: 60,
-                            debug: false
-                        });
-                        
-                        hls.loadSource(url);
-                        hls.attachMedia(video);
-                        
-                        hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                            console.log('視頻清單已解析完成');
-                            video.play()
-                                .then(() => {
-                                    console.log('影片播放成功');
-                                    playPauseBtn.textContent = '暫停';
-                                    hideLoading();
-                                })
-                                .catch(e => {
-                                    console.error('播放失敗:', e);
-                                    playPauseBtn.textContent = '播放';
-                                });
-                        });
-                        
-                        hls.on(Hls.Events.ERROR, function(event, data) {
-                            if (data.fatal) {
-                                if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                                    hls.startLoad();
-                                } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-                                    hls.recoverMediaError();
-                                } else {
-                                    showLoading('播放錯誤，請嘗試其他頻道', true);
-                                }
-                            }
-                        });
-                    } catch (error) {
-                        console.error('HLS 初始化失敗:', error);
-                        showLoading('播放器初始化失敗', true);
-                    }
-                } else {
-                    console.log('不支援 HLS 播放');
-                    showLoading('您的瀏覽器不支援 HLS 播放', true);
-                }
+                hideAllContainers();
             }
             
             // 顯示載入中提示
@@ -917,6 +1087,12 @@
                 statusTimeout = setTimeout(() => {
                     statusMsg.style.display = 'none';
                 }, duration);
+            }
+            
+            // 顯示/隱藏格式選擇器
+            function toggleFormatSelector() {
+                isFormatSelectorVisible = !isFormatSelectorVisible;
+                formatSelector.style.display = isFormatSelectorVisible ? 'block' : 'none';
             }
             
             // 設置事件監聽
@@ -1024,6 +1200,53 @@
                 // 全螢幕變更事件
                 document.addEventListener('fullscreenchange', updateFullscreenButton);
                 document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+                
+                // 格式選擇按鈕
+                formatHLS.addEventListener('click', () => {
+                    currentPlayMethod = 'hls';
+                    if (currentUrl) {
+                        playWithCurrentMethod(currentUrl);
+                    }
+                    hideChannelSelector();
+                });
+                
+                formatDirect.addEventListener('click', () => {
+                    currentPlayMethod = 'direct';
+                    if (currentUrl) {
+                        playWithCurrentMethod(currentUrl);
+                    }
+                    hideChannelSelector();
+                });
+                
+                formatEmbed.addEventListener('click', () => {
+                    currentPlayMethod = 'embed';
+                    if (currentUrl) {
+                        playWithCurrentMethod(currentUrl);
+                    }
+                    hideChannelSelector();
+                });
+                
+                formatMp4.addEventListener('click', () => {
+                    currentPlayMethod = 'mp4';
+                    if (currentUrl) {
+                        playWithCurrentMethod(currentUrl);
+                    }
+                    hideChannelSelector();
+                });
+                
+                // 創建格式切換按鈕
+                const formatToggleBtn = document.createElement('button');
+                formatToggleBtn.id = 'formatToggleBtn';
+                formatToggleBtn.className = 'control-button';
+                formatToggleBtn.textContent = '播放格式';
+                formatToggleBtn.style.position = 'absolute';
+                formatToggleBtn.style.top = '20px';
+                formatToggleBtn.style.left = '20px';
+                formatToggleBtn.style.zIndex = '15';
+                formatToggleBtn.style.background = '#c62828';
+                document.getElementById('videoContainer').appendChild(formatToggleBtn);
+                
+                formatToggleBtn.addEventListener('click', toggleFormatSelector);
             }
             
             // 處理觸控開始事件
@@ -1091,6 +1314,96 @@
                 } else {
                     fullscreenBtn.textContent = '全螢幕';
                 }
+            }
+            
+            // 修改 Tesla 播放模式，嘗試多種方法
+            function playInTeslaMode(url) {
+                console.log('改進的 Tesla 模式播放:', url);
+                isTeslaMode = true;
+                teslaContainer.style.display = 'block';
+                
+                // 1. 首先嘗試原生方法
+                teslaVideo.src = url;
+                teslaVideo.oncanplay = () => {
+                    console.log('Tesla 視頻可以播放了');
+                };
+                
+                // 嘗試多種方法播放，包括延遲播放以確保視頻載入
+                const playAttempts = [100, 500, 1000, 2000];
+                let attemptIndex = 0;
+                
+                function attemptPlay() {
+                    if (attemptIndex >= playAttempts.length) {
+                        console.log('所有播放嘗試都失敗，切換到替代方法');
+                        currentPlayMethod = 'direct';
+                        playWithCurrentMethod(url);
+                        return;
+                    }
+                    
+                    setTimeout(() => {
+                        console.log(`嘗試播放 #${attemptIndex + 1}`);
+                        teslaVideo.play()
+                            .then(() => {
+                                console.log('Tesla 播放成功');
+                                hideLoading();
+                                playPauseBtn.textContent = '暫停';
+                            })
+                            .catch(err => {
+                                console.error(`播放嘗試 #${attemptIndex + 1} 失敗:`, err);
+                                attemptIndex++;
+                                attemptPlay();
+                            });
+                    }, playAttempts[attemptIndex]);
+                }
+                
+                // 開始嘗試播放
+                attemptPlay();
+                
+                // 監聽錯誤事件
+                const errorHandler = () => {
+                    console.error('Tesla 播放錯誤');
+                    teslaVideo.removeEventListener('error', errorHandler);
+                    
+                    // 如果原生方法失敗，嘗試直接模式
+                    if (currentPlayMethod === 'hls') {
+                        currentPlayMethod = 'direct';
+                        playWithCurrentMethod(url);
+                    } else {
+                        showLoading('播放錯誤，請嘗試其他格式', true);
+                    }
+                };
+                
+                teslaVideo.addEventListener('error', errorHandler);
+            }
+            
+            // 直接以 URL 播放 (預設方法)
+            function playDirectUrl(url) {
+                if (!url) return;
+                
+                showStatus(`正在載入直接URL`);
+                showLoading(`載入URL: ${url}`);
+                currentUrl = url;
+                
+                // 創建一個臨時頻道物件
+                const tempChannel = {
+                    name: '直接播放URL',
+                    logo: '',
+                    url: url
+                };
+                
+                // 添加到頻道列表的開頭
+                channels.unshift(tempChannel);
+                currentChannelIndex = 0;
+                
+                // 清除先前的播放器狀態
+                cleanupPlayers();
+                
+                // 根據當前方法播放
+                playWithCurrentMethod(url);
+                
+                // 更新頻道列表
+                renderChannelList();
+                hideChannelSelector();
             }
         });
     </script>
