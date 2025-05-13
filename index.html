@@ -1,26 +1,25 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <title>Stream Player</title>
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <title>TS 串流播放器</title>
+  <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.8.0/dist/mpegts.min.js"></script>
 </head>
 <body>
-  <video id="video" controls autoplay style="width:100%; height:auto;"></video>
+  <video id="videoElement" controls autoplay style="width: 100%; height: auto;"></video>
   <script>
-    if (Hls.isSupported()) {
-      var video = document.getElementById('video');
-      var hls = new Hls();
-      hls.loadSource('http://php.jdshipin.com:8880/TVOD/iptv.php?id=fct2');
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, function() {
-        video.play();
+    if (mpegts.getFeatureList().mseLivePlayback) {
+      var videoElement = document.getElementById('videoElement');
+      var player = mpegts.createPlayer({
+        type: 'mpegts',
+        isLive: true,
+        url: 'http://php.jdshipin.com:8880/TVOD/iptv.php?id=fct2'
       });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = 'http://php.jdshipin.com:8880/TVOD/iptv.php?id=fct2';
-      video.addEventListener('loadedmetadata', function() {
-        video.play();
-      });
+      player.attachMediaElement(videoElement);
+      player.load();
+      player.play();
+    } else {
+      alert('您的瀏覽器不支援 MSE，無法播放此串流。');
     }
   </script>
 </body>
