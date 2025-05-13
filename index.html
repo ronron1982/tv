@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>特斯拉 M3U8 播放器 V2.11 </title>
-    <!-- 參考 hoy.tv 的簡潔引入方式 -->
+    <title>特斯拉串流播放器</title>
     <style>
         * {
             margin: 0;
@@ -39,60 +38,62 @@
             background-color: #000;
         }
         
-        /* 控制按鈕 - 參考 hoy.tv 的簡化界面 */
-        #controls {
+        /* 控制按鈕 - 最小化為只有播放按鈕 */
+        .play-button {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.5);
+            color: white;
+            border: 2px solid white;
+            padding: 20px 40px;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 10;
+        }
+        
+        /* URL 輸入區域 */
+        #urlContainer {
             position: absolute;
             bottom: 20px;
+            left: 0;
             width: 100%;
-            text-align: center;
-            z-index: 5;
-        }
-        
-        .btn {
-            margin: 0 10px;
-            padding: 10px 20px;
-            background: rgba(0, 0, 0, 0.5);
-            color: #fff;
-            border: 1px solid #fff;
-            border-radius: 5px;
-            font-size: 18px;
-        }
-        
-        /* 頻道列表 - 固定顯示，無需隱藏或顯示的複雜邏輯 */
-        #channelList {
-            width: 100%;
-            max-height: 40%;
-            position: absolute;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
-            overflow-y: auto;
             padding: 10px;
-            border-top: 1px solid #333;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            gap: 10px;
         }
         
-        .channel-item {
-            padding: 10px;
-            margin: 5px 0;
-            background: rgba(32, 148, 243, 0.2);
-            border-radius: 5px;
-            cursor: pointer;
-            text-align: center;
-        }
-        
-        .channel-item:hover, .channel-item.active {
-            background: rgba(32, 148, 243, 0.5);
-        }
-
-        /* URL 輸入區域 */
         #urlInput {
-            width: 100%;
+            flex: 1;
             padding: 10px;
-            margin-bottom: 10px;
             font-size: 16px;
             border: none;
-            border-bottom: 1px solid #333;
             background: rgba(255, 255, 255, 0.1);
             color: #fff;
+        }
+        
+        #playBtn {
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        
+        /* 直播提示 */
+        #liveIndicator {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            font-size: 14px;
+            border-radius: 4px;
+            display: none;
         }
         
         /* 載入提示 */
@@ -106,312 +107,185 @@
             z-index: 100;
         }
         
-        #videoPlayer, #teslaIframe {
+        iframe {
             width: 100%;
             height: 100%;
-        }
-
-        /* 不可見視頻 - 用於播放背景音訊 */
-        #hiddenVideo {
-            position: absolute;
-            top: -9999px;
-            left: -9999px;
-            width: 0;
-            height: 0;
+            border: none;
         }
     </style>
 </head>
 <body>
     <div id="app">
         <div id="videoContainer">
-            <!-- 簡化為iframe播放，類似hoy.tv的方法 -->
-            <iframe id="teslaIframe" allowfullscreen allow="autoplay; fullscreen" frameborder="0" scrolling="no"></iframe>
+            <!-- 使用iframe作為播放容器 -->
+            <iframe id="playerFrame" allowfullscreen allow="autoplay; fullscreen"></iframe>
             
-            <!-- 控制區域 - 簡化版 -->
-            <div id="controls">
-                <button id="prevBtn" class="btn">上一個</button>
-                <button id="nextBtn" class="btn">下一個</button>
-            </div>
-            
-            <!-- 載入指示器 -->
+            <!-- 載入提示器 -->
             <div id="loadingIndicator">載入中...</div>
             
-            <!-- 頻道列表 - 直接顯示而非彈出式 -->
-            <div id="channelList">
-                <input type="text" id="urlInput" placeholder="輸入直接播放連結...">
-                <div id="channelItems"></div>
-            </div>
+            <!-- 直播提示器 -->
+            <div id="liveIndicator">直播中</div>
             
-            <!-- 不可見的視頻元素 - 僅用於背景 -->
-            <video id="hiddenVideo" muted playsinline webkit-playsinline></video>
+            <!-- URL 輸入區域 -->
+            <div id="urlContainer">
+                <input type="text" id="urlInput" placeholder="輸入視頻串流網址..." value="http://php.jdshipin.com:8880/TVOD/iptv.php?id=fct2">
+                <button id="playBtn">播放</button>
+            </div>
         </div>
     </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             // 基本元素引用
-            const teslaIframe = document.getElementById('teslaIframe');
-            const prevBtn = document.getElementById('prevBtn');
-            const nextBtn = document.getElementById('nextBtn');
-            const channelItems = document.getElementById('channelItems');
+            const playerFrame = document.getElementById('playerFrame');
             const loadingIndicator = document.getElementById('loadingIndicator');
+            const liveIndicator = document.getElementById('liveIndicator');
             const urlInput = document.getElementById('urlInput');
+            const playBtn = document.getElementById('playBtn');
             
-            // 全局變數
-            const m3u8Url = 'https://ronron1982.github.io/hktv.m3u8';
-            let channels = [];
-            let currentChannelIndex = 0;
+            // 直接播放指定串流
+            playStream('http://php.jdshipin.com:8880/TVOD/iptv.php?id=fct2');
             
-            // 初始化
-            initPlayer();
-            
-            async function initPlayer() {
-                try {
-                    await loadChannels();
-                    if (channels.length > 0) {
-                        playChannel(0);
-                    }
-                } catch (error) {
-                    console.error('初始化失敗:', error);
-                    showError('載入頻道列表失敗，請刷新重試');
-                }
-            }
-            
-            async function loadChannels() {
+            // 創建播放器
+            function playStream(url) {
+                if (!url) return;
+                
+                // 顯示加載中提示
                 showLoading(true);
                 
-                try {
-                    const response = await fetch(m3u8Url);
-                    if (!response.ok) throw new Error('無法載入頻道列表');
-                    
-                    const data = await response.text();
-                    parseM3U8(data);
-                    renderChannelList();
-                    showLoading(false);
-                } catch (error) {
-                    showLoading(false);
-                    throw error;
-                }
-            }
-            
-            function parseM3U8(data) {
-                channels = [];
-                const lines = data.split('\n');
-                let currentChannel = {};
-                
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (line.startsWith('#EXTINF:')) {
-                        // 解析頻道名稱
-                        let nameMatch = line.match(/,(.+)$/);
-                        const name = nameMatch ? nameMatch[1].trim() : '未命名頻道';
-                        
-                        // 解析頻道標誌
-                        let logoMatch = line.match(/tvg-logo="([^"]+)"/);
-                        const logo = logoMatch ? logoMatch[1].trim() : '';
-                        
-                        // 拿下一行作為URL
-                        if (i + 1 < lines.length) {
-                            const nextLine = lines[i + 1].trim();
-                            if (nextLine && !nextLine.startsWith('#')) {
-                                channels.push({
-                                    name: name,
-                                    logo: logo,
-                                    url: nextLine
-                                });
-                            }
-                        }
-                    }
-                }
-                
-                console.log(`已載入 ${channels.length} 個頻道`);
-            }
-            
-            function renderChannelList() {
-                channelItems.innerHTML = '';
-                
-                if (channels.length === 0) {
-                    channelItems.innerHTML = '<div class="channel-item">沒有可用的頻道</div>';
-                    return;
-                }
-                
-                channels.forEach((channel, index) => {
-                    const item = document.createElement('div');
-                    item.className = 'channel-item';
-                    item.textContent = channel.name;
-                    item.onclick = () => playChannel(index);
-                    
-                    if (index === currentChannelIndex) {
-                        item.classList.add('active');
-                    }
-                    
-                    channelItems.appendChild(item);
-                });
-            }
-            
-            function playChannel(index) {
-                if (channels.length === 0) return;
-                
-                if (index < 0) index = channels.length - 1;
-                if (index >= channels.length) index = 0;
-                
-                currentChannelIndex = index;
-                const channel = channels[currentChannelIndex];
-                
-                // 更新活動頻道樣式
-                updateActiveChannel();
-                
-                // 使用hoy.tv方法：內嵌HTML5視頻
-                showLoading(true);
-                createVideoPlayer(channel.url, channel.name);
-            }
-            
-            function updateActiveChannel() {
-                // 更新活動頻道樣式
-                const items = document.querySelectorAll('.channel-item');
-                items.forEach((item, index) => {
-                    if (index === currentChannelIndex) {
-                        item.classList.add('active');
-                    } else {
-                        item.classList.remove('active');
-                    }
-                });
-            }
-            
-            function createVideoPlayer(url, title) {
+                // 簡單的播放頁面，適用於特斯拉瀏覽器
                 const playerHtml = `
                     <!DOCTYPE html>
                     <html>
                     <head>
                         <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>${title || '視頻播放器'}</title>
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+                        <title>串流播放器</title>
                         <style>
-                            body, html { 
-                                margin: 0; 
-                                padding: 0; 
-                                height: 100%; 
-                                width: 100%; 
-                                overflow: hidden; 
-                                background-color: #000;
+                            body, html {
+                                margin: 0;
+                                padding: 0;
+                                width: 100%;
+                                height: 100%;
+                                background: #000;
+                                overflow: hidden;
                             }
-                            #player {
+                            video {
                                 width: 100%;
                                 height: 100%;
                                 object-fit: contain;
                             }
-                            .play-button {
+                            #playButton {
                                 position: absolute;
                                 top: 50%;
                                 left: 50%;
                                 transform: translate(-50%, -50%);
-                                background: rgba(0,0,0,0.5);
-                                color: white;
-                                border: 2px solid white;
                                 padding: 20px 40px;
-                                font-size: 20px;
+                                background: rgba(0, 0, 0, 0.7);
+                                color: white;
+                                font-size: 24px;
+                                border: 2px solid white;
                                 cursor: pointer;
                                 z-index: 10;
                             }
                         </style>
                     </head>
                     <body>
-                        <video id="player" controls autoplay playsinline webkit-playsinline>
+                        <video id="videoPlayer" controls autoplay playsinline webkit-playsinline>
                             <source src="${url}" type="application/x-mpegURL">
-                            您的瀏覽器不支持視頻播放
+                            您的瀏覽器不支援視頻播放
                         </video>
-                        <button class="play-button" onclick="document.getElementById('player').play()">點擊播放</button>
+                        <button id="playButton" onclick="document.getElementById('videoPlayer').play()">點擊播放</button>
+                        
                         <script>
-                            // 簡化自動播放邏輯
-                            const player = document.getElementById('player');
-                            const playButton = document.querySelector('.play-button');
+                            const video = document.getElementById('videoPlayer');
+                            const playButton = document.getElementById('playButton');
                             
-                            player.onloadedmetadata = function() {
-                                player.play().then(() => {
+                            // 嘗試自動播放
+                            video.addEventListener('canplay', function() {
+                                video.play().then(() => {
                                     playButton.style.display = 'none';
-                                }).catch(() => {
+                                    window.parent.postMessage('playing', '*');
+                                }).catch(err => {
+                                    console.log('需要用戶交互才能播放');
                                     playButton.style.display = 'block';
                                 });
-                            }
+                            });
                             
-                            player.onplaying = function() {
+                            // 播放事件
+                            video.addEventListener('playing', function() {
                                 playButton.style.display = 'none';
                                 window.parent.postMessage('playing', '*');
-                            }
+                            });
                             
-                            player.onerror = function() {
+                            // 錯誤處理
+                            video.addEventListener('error', function() {
+                                console.error('視頻播放錯誤');
                                 window.parent.postMessage('error', '*');
+                            });
+                            
+                            // 特斯拉瀏覽器特殊處理
+                            if (/Tesla|QtCarBrowser/i.test(navigator.userAgent)) {
+                                document.body.addEventListener('click', function() {
+                                    if (video.paused) {
+                                        video.play().catch(err => console.error('播放失敗:', err));
+                                    }
+                                });
                             }
                         </script>
                     </body>
                     </html>
                 `;
                 
-                try {
-                    const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(playerHtml);
-                    teslaIframe.src = dataUrl;
-                    
-                    // 監聽來自iframe的消息
-                    window.addEventListener('message', function(event) {
-                        if (event.data === 'playing') {
-                            showLoading(false);
-                        } else if (event.data === 'error') {
-                            showError('播放錯誤，嘗試其他頻道');
-                        }
-                    });
-                } catch (error) {
-                    console.error('創建播放器失敗:', error);
-                    showError('創建播放器失敗');
-                }
+                // 使用data URL加載HTML內容
+                const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(playerHtml);
+                playerFrame.src = dataUrl;
+                
+                // 監聽來自iframe的消息
+                window.addEventListener('message', function(event) {
+                    if (event.data === 'playing') {
+                        console.log('視頻開始播放');
+                        showLoading(false);
+                        liveIndicator.style.display = 'block';
+                    } else if (event.data === 'error') {
+                        console.error('播放錯誤');
+                        showLoading(false);
+                        alert('串流播放失敗，請檢查網址是否正確');
+                    }
+                });
             }
             
-            function playDirectUrl() {
+            // 顯示/隱藏載入提示
+            function showLoading(visible) {
+                loadingIndicator.style.display = visible ? 'block' : 'none';
+            }
+            
+            // 按鈕事件監聽
+            playBtn.addEventListener('click', function() {
                 const url = urlInput.value.trim();
-                if (!url) return;
-                
-                // 創建臨時頻道並播放
-                const tempChannel = {
-                    name: '自定義頻道',
-                    logo: '',
-                    url: url
-                };
-                
-                // 添加到頻道列表開頭
-                channels.unshift(tempChannel);
-                currentChannelIndex = 0;
-                
-                // 更新頻道列表並播放
-                renderChannelList();
-                playChannel(0);
-            }
-            
-            function showLoading(isVisible) {
-                loadingIndicator.style.display = isVisible ? 'block' : 'none';
-            }
-            
-            function showError(message) {
-                showLoading(false);
-                alert(message);
-            }
-            
-            // 設置事件監聽
-            prevBtn.addEventListener('click', () => playChannel(currentChannelIndex - 1));
-            nextBtn.addEventListener('click', () => playChannel(currentChannelIndex + 1));
-            
-            urlInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    playDirectUrl();
+                if (url) {
+                    playStream(url);
+                } else {
+                    alert('請輸入有效的串流網址');
                 }
             });
             
-            // 特斯拉瀏覽器特殊處理
+            // 回車鍵觸發播放
+            urlInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    const url = urlInput.value.trim();
+                    if (url) {
+                        playStream(url);
+                    }
+                }
+            });
+            
+            // 檢測特斯拉瀏覽器
             const isTesla = /Tesla|QtCarBrowser/i.test(navigator.userAgent);
             if (isTesla) {
                 console.log('特斯拉瀏覽器模式');
-                // 移除特斯拉瀏覽器不需要的複雜行為
-                document.querySelectorAll('*').forEach(el => {
-                    el.style.touchAction = 'none';
-                });
+                // 簡化特斯拉瀏覽器的交互
+                document.body.style.touchAction = 'none';
             }
         });
     </script>
